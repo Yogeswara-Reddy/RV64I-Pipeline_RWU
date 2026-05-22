@@ -1,0 +1,24 @@
+Two chip variants are defined (see also Section~\ref{subsec:chipVariants}):
+
+\paragraph{Variant~A -- No-Cache (RTL: \texttt{RV\_NoPipeline}):}
+\begin{itemize}
+  \item RISC-V RV64I core, non-pipelined single-cycle execution
+  \item On-chip Instruction Memory: 32\,kB (8\,192 instructions, JTAG-loadable)
+  \item On-chip Data Memory: 8\,kB (Wishbone slave, byte-enable, R/W)
+  \item GPIO peripheral (Wishbone)
+  \item Clock Generation Unit (CGU, Wishbone)
+  \item JTAG TAP for I-Mem loading and boundary-scan
+  \item No cache, no external Flash interface
+\end{itemize}
+
+\paragraph{Variant~B -- Cache (RTL: \texttt{RV\_NoPipelineCache}):}
+\begin{itemize}
+  \item RISC-V RV64I core, non-pipelined single-cycle execution
+  \item Instruction Cache: 4\,kB, 4-way set-associative, 32\,B line
+  \item Data Cache: 4\,kB, 4-way set-associative, 32\,B line,
+        read-allocate, no-write (Flash is read-only; stores bypass to Scratchpad)
+  \item On-chip Scratchpad SRAM: 8\,kB (direct access, R/W, replaces Variant~A D-Mem)
+  \item Off-chip NOR Flash via QSPI: code and read-only data
+  \item GPIO peripheral, CGU, QSPI controller (all Wishbone)
+  \item JTAG TAP (boundary-scan; I-Mem scan chain removed)
+\end{itemize}

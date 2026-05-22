@@ -1,0 +1,512 @@
+tb_rv64i (tb_rv64i.sv)                  Test bench
+- as_top_mem (asTopMem.sv)              Top level
+  * as_decode (asDecode.sv)             Memory map
+  * as_cpu (asCpu.sv)                   CPU top
+    + as_master_bpi (asMBpi.sv)         I-Bus master BPI
+    + as_master_bpi (asMBpi.sv)         D-Bus master BPI
+    + as_pc (asPC.sv)                   Program counter
+    + as_adder (asAdd.sv)               Adder +4
+    + as_adder (asAdd.sv)               Branch target
+    + as_mux2 (asMux2.sv)               JALR mux
+    + as_mux2 (asMux2.sv)               PC mux
+    + as_mux2 (asMux2.sv)               regB mux
+    + as_mux2 (asMux2.sv)               regA mux
+    + as_regfile (asRegFile.sv)         Register file
+    + as_immgen (asImmGen.sv)           Immediate expansion
+    + as_alurv (asAluRV.sv)             ALU
+    + as_mux3 (asMux3.sv)               D-Mem, result, PC+4 mux
+    + as_controlall (asControlAll.sv)   Instruction decoder
+    + scan_cell (scan_cell.sv)          Some scan cells
+    + as_delay_reg (asDelReg.sv)        Delay cell for adjusting the synchronous D-Mem
+  * as_gpio_top (asGpioTop.sv)          GPIO top
+    + as_slave_bpi (asSBpi.sv)          Slave BPI for peripherals
+    + as_gpio (asGpio.sv)               GPIO core
+  * as_cgu (asCgu.sv)                   CGU top
+    + as_slave_bpi (asSBpi.sv)          Slave BPI for peripherals
+    + as_cgu_core (asCguCore.sv)        CGU core
+  * as_imem (asIMem.sv)                 Instruction memory
+  * as_slave_bpi_mem (asSBpiMem.sv)     Slave BPI for data memory
+  * as_dmem (asDMem.sv)                 Data memory
+    + as_dmem_front (asDMemFront.sv)    Arrangement for stores
+    + as_dmem_core (asDMemCore.sv)      Data memory
+    + as_dmem_back (asDMemBack.sv)      Arrangement for loads
+  * jtag (jtag.sv)                      JTAG, components + logic
+    + tap_fsm (tap_fsm.sv)              FSM
+    + ir_cell (ir_cell.sv)              Instruction register
+    + ir_decode (ir_decode.sv)          Instruction decoder
+    + dr_reg (dr_reg.sv)                IDCODE
+    + by_cell (by_cell.sv)              BYPASS
+  * dr_reg (dr_reg.sv)                  Data register for loading the I-Mem
+
+
+Cache:
+======
+Es soll nur zum Test ein FPGA werden, das Ziel ist ein ASIC. Ich möchte auch intern zwei getrennte Speicher für Daten und einen für Instruktionen haben. Eine Parallelgruppe arbeitet an einer 5-Stufigen Pipeline, am Ende wird beides zusammen geführt. Die Speicher sind ASIC-Speicher (X-Fab), also synchronous write und synchronous read.
+
+Dann bist du bereits in einer deutlich professionelleren Architekturphase — und einige Entscheidungen ändern sich dadurch fundamental.
+
+Für ein ASIC-Ziel mit späterer 5-Stage-Pipeline ist deine Entscheidung für:
+
+getrennte I/D-Speicher
+getrennte I/D-Caches
+synchrone SRAM-Makros (X-Fab)
+externes unified QSPI-NOR-Flash
+
+genau der richtige Weg.
+
+Entscheidender Unterschied FPGA ↔ ASIC
+
+Mit ASIC-SRAMs hast du praktisch immer:
+
+synchronous read
+synchronous write
+
+also:
+
+Adresse anlegen
+→ Daten kommen 1 Takt später
+
+Das bedeutet:
+
+Ein echter „single-cycle“-Core existiert faktisch nicht mehr
+
+Sobald du ASIC-SRAM verwendest, bekommst du automatisch mindestens:
+
+WAIT-Zustände
+oder eine implizite Mikro-Pipeline
+
+Das ist völlig normal.
+
+Wichtige Konsequenz für euren Core
+
+Da parallel bereits eine 5-Stage-Pipeline entsteht:
+
+Baue dein Memory-Subsystem bereits pipeline-kompatibel
+
+Das ist EXTREM wichtig.
+
+Sonst müsst ihr später alles neu bauen.
+
+Empfohlene Gesamtarchitektur
+Sehr gute ASIC-Struktur
+                 +----------------------+
+                 |        CPU           |
+                 |   non-pipelined      |
+                 |   später 5-stage     |
+                 +----------+-----------+
+                            |
+              +-------------+-------------+
+              |                           |
+         Instruction Bus             Data Bus
+              |                           |
+        +-----+-----+               +-----+-----+
+        | I-Cache   |               | D-Cache   |
+        | 4-Way SA  |               | 4-Way SA  |
+        +-----+-----+               +-----+-----+
+              |                           |
+      +-------+-------+           +-------+-------+
+      | I-SRAM Macro  |           | D-SRAM Macro  |
+      | X-Fab SRAM    |           | X-Fab SRAM    |
+      +-------+-------+           +-------+-------+
+              |                           |
+              +-------------+-------------+
+                            |
+                     Memory Arbiter
+                            |
+                     QSPI Controller
+                            |
+                      NOR Flash
+Jetzt kommt der entscheidende ASIC-Punkt:
+Die SRAMs sind bereits L1-Memory
+
+Das ist typisch für kleine ASIC-SoCs.
+
+Du hast eigentlich:
+
+CPU
+ ↓
+Caches
+ ↓
+lokale SRAM-Banks
+ ↓
+externes Flash
+
+Das externe Flash ist damit:
+
+kein normales RAM
+sondern eher:
+backing store
+boot source
+slow storage
+
+GENAU wie bei vielen Mikrocontrollern.
+
+Wichtigste Empfehlung überhaupt
+Das Flash NICHT als transparenten Hauptspeicher behandeln
+
+Sondern:
+
+Flash → SRAM refill
+
+Also:
+
+Beim Cache-Miss:
+
+Nicht:
+
+CPU direkt auf Flash
+
+Sondern:
+
+Flash → SRAM-Block
+SRAM → Cache refill
+
+Warum?
+
+Weil NOR-Flash:
+
+riesige Latenz
+schlechte Random-Reads
+schlechte Arbitration
+
+hat.
+
+Daraus ergibt sich praktisch:
+Mini-L2 Architektur
+
+Eigentlich baust du:
+
+Ebene	Funktion
+I/D-Cache	L1
+I/D-SRAM	L2 / tightly coupled
+QSPI Flash	backing store
+
+Das ist ASIC-technisch sehr sinnvoll.
+
+Besonders wichtig für eure spätere Pipeline
+
+Die Pipelinegruppe wird euch später danken, wenn ihr:
+
+ein sauberes Memory Interface definiert
+
+Nicht:
+
+addr/data/we
+
+sondern:
+
+Request/Response-Protokoll
+
+Zum Beispiel:
+
+req_valid
+req_addr
+req_write
+req_wdata
+req_be
+
+resp_valid
+resp_rdata
+stall
+
+Das ist GOLD wert.
+
+Warum?
+
+Weil:
+
+SRAM 1-cycle latency hat
+Cache Misses multicycle sind
+Flash extrem multicycle ist
+
+Ihr braucht daher sowieso:
+
+variable wait states
+Cache-Architektur für ASIC
+
+Jetzt ändern sich einige Empfehlungen.
+
+I-Cache
+Read-only
+
+Perfekt.
+
+4-Way SA
+
+Sehr vernünftig.
+
+Line Size
+
+Ich würde nun empfehlen:
+
+Ziel	Line Size
+FPGA-Test	16 B
+ASIC final	32 B oder 64 B
+
+NOR-Flash liebt lange Bursts.
+
+D-Cache
+
+Für ASIC würde ich DIREKT:
+
+write-back + write-allocate
+
+machen.
+
+Warum?
+
+Weil:
+
+externe Zugriffe teuer sind
+Flash noch teurer ist
+SRAM-Bandbreite wertvoll ist
+
+Write-through wäre später ein Bottleneck.
+
+Kritischer Punkt:
+NOR-Flash ist NICHT RAM
+
+Deshalb:
+
+Schreibzugriffe niemals direkt auf Flash
+
+NOR-Flash:
+
+braucht erase
+blockweise
+sehr langsam
+
+Das bedeutet:
+
+Flash praktisch read-only behandeln
+
+Sehr wichtig.
+
+Sinnvolle Nutzung des Flashs
+Nutzung	Gut?
+Bootcode	ja
+Firmware	ja
+Konstanten	ja
+seltene Daten	ja
+Heap/Stack	nein
+normale Stores	nein
+Deshalb brauchst du vermutlich:
+Nur Instruction-Fetch aus Flash
+
+und:
+
+Daten primär im D-SRAM
+
+Das entspricht realen SoCs.
+
+Architektur, die ich empfehlen würde
+Instruktionen
+Flash
+ ↓
+I-SRAM refill
+ ↓
+I-Cache
+ ↓
+CPU
+Daten
+D-SRAM
+ ↓
+D-Cache
+ ↓
+CPU
+
+Und nur optional:
+
+readonly Daten aus Flash.
+Ganz wichtiger ASIC-Punkt:
+ECC / Parity vorbereiten
+
+Selbst wenn ihr es zunächst nicht nutzt:
+
+Reserviert im Cache:
+
+Valid
+Dirty
+ECC/parity bits
+
+Sonst wird später alles hässlich.
+
+ASIC-Cacheaufbau
+
+Typischer Set-Aufbau:
+
+Pro Cacheline
+valid
+dirty
+tag
+data[LINE_SIZE]
+pseudo_lru
+ASIC Timing Reality
+
+Mit X-Fab SRAM:
+
+typischer Ablauf
+Takt N
+addr ausgeben
+Takt N+1
+data gültig
+
+Also:
+
+jeder Cache-Hit kostet effektiv 1 Takt
+
+Das ist normal.
+
+Die Pipelinegruppe wird ohnehin damit arbeiten müssen.
+
+Deshalb:
+Cache FSM schon jetzt pipelined denken
+
+Beispiel:
+
+IDLE
+LOOKUP
+HIT
+MISS
+REFILL
+RESPOND
+
+Nicht:
+
+kombinatorischer Monsterpfad
+Ganz wichtiger Integrationspunkt
+
+Wenn später beide CPU-Versionen zusammengeführt werden:
+
+MUSS das Memory-System identisch bleiben
+
+Das ist der Schlüssel.
+
+Dann könnt ihr:
+
+denselben Cache
+denselben Arbiter
+dieselben SRAM-Controller
+
+für beide Kerne verwenden.
+
+Meine konkrete Empfehlung für euch
+Interface standardisieren
+
+Etwa so:
+
+CPU <-> Cache
+
+req_valid
+req_ready
+req_addr
+req_write
+req_wdata
+req_size
+
+resp_valid
+resp_rdata
+resp_error
+
+Das spart euch MONATE später.
+
+Was ich als nächstes entwerfen würde
+
+In dieser Reihenfolge:
+
+SRAM-Controller
+Cacheline-Organisation
+Cache-FSM
+Arbiter
+QSPI Burst-Engine
+Flash-Refill-Mechanismus
+Gemeinsames Busprotokoll
+Besonders wichtig:
+QSPI-Flash niemals direkt an die CPU hängen
+
+Immer:
+
+CPU
+ → Cache
+   → SRAM
+     → Flash refill engine
+
+Sonst zerstört die Flash-Latenz eure Pipeline später vollständig.
+
+Für euren ASIC seid ihr damit schon sehr nahe an:
+ARM Cortex-M-artigen Architekturen
+kleinen RISC-V-MCUs
+embedded SoCs
+AI-Edge-Microcontrollern
+
+vom grundsätzlichen Aufbau her.
+
+
+Wechsel von Wishbone auf AXI — Empfehlung
+  
+  Ja, der Wechsel ist sinnvoll — aber nicht auf AXI-Lite, sondern differenziert:
+
+  Das zentrale Problem: Cache-Line-Fills brauchen Bursts
+
+  32 B Cache-Line = 8 × 32-Bit-Worte aus dem NOR Flash.
+
+  ┌─────────────┬────────────────────────────┬────────────┐
+  │  Interface  │      Cache-Line-Fill       │ Protokoll  │
+  ├─────────────┼────────────────────────────┼────────────┤
+  │ Wishbone B3 │ 8 Einzeltransaktionen      │ kein Burst │
+  ├─────────────┼────────────────────────────┼────────────┤
+  │ AXI-Lite    │ 8 Einzeltransaktionen      │ kein Burst │
+  ├─────────────┼────────────────────────────┼────────────┤
+  │ AXI4        │ 1 Burst-Transfer (ARLEN=7) │ Burst      │
+  └─────────────┴────────────────────────────┴────────────┘
+
+  AXI-Lite und Wishbone sind hier gleichwertig schlecht. Für den Speicherpfad (Cache ↔ Arbiter ↔ QSPI) braucht man AXI4 mit INCR-Burst.
+
+
+  ---
+  Empfohlene Aufteilung nach Pfad
+
+  CPU-Kern
+    │
+    ├─ I-Cache / D-Cache (intern: simples valid/ready)
+    │     │
+    │     └─ AXI4 (mit Burst, ARLEN=7 für 32B)
+    │           │
+    │     Memory Arbiter ──→ QSPI Controller
+    │
+    └─ Peripheral Bus (UART, GPIO, QSPI-Config-Regs)
+          └─ AXI-Lite (kein Burst nötig, nur Register-Zugriff)
+
+  CPU↔Cache intern: eigene schlanke Schnittstelle (valid/ready + addr/data/we) reicht — kein AXI-Overhead für den synchronen On-Chip-Pfad.
+
+  ---
+  Warum AXI4 gut zur 5-stage Pipeline passt
+
+  Die decoupled Channels (AR/R, AW/W/B) matchen die Pipeline-Stufen fast natürlich:
+
+  - IF-Stage → AR-Channel schickt Instruction-Fetch-Request
+  - MEM-Stage → AW/W/AR-Channel für Load/Store
+  - Outstanding Transactions: Cache kann nächsten Fill anfangen, während alter noch läuft
+  - Write-Response-Channel (B) macht Write-Back aus dem D-Cache sauber handhabbar
+
+  ---
+  Aufwand / Tradeoff
+
+  ┌────────────────────────────────────────┬─────────────────────────────────────────────────────────────────┐
+  │                 Aspekt                 │                             Aufwand                             │
+  ├────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Bestehende IPs (UART, GPIO, CGU, DMEM) │ Wishbone→AXI-Lite-Wrapper nötig (je ~30 Zeilen)                 │
+  ├────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ QSPI-Controller                        │ Neues AXI4-Burst-Interface (lohnt sich — Cache-Fill-Bottleneck) │
+  ├────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Cache-Controller                       │ Neues Modul, direkt AXI4                                        │
+  ├────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Memory-Arbiter                         │ Neues Modul, AXI4                                               │
+  └────────────────────────────────────────┴─────────────────────────────────────────────────────────────────┘
+
+  ---
+  Empfehlung konkret
+
+  1. Jetzt Wishbone-Signal-Namen beibehalten, aber intern einen as_wb2axilite Bridge-Wrapper schreiben — dann können alle bestehenden IPs unverändert bleiben
+  2. Für den Cache↔Arbiter-Pfad direkt AXI4 (kein Wishbone-Erbe, neuer Code)
+  3. QSPI-Kern um AXI4-Burst-Slave erweitern statt Wrapper

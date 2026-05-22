@@ -1,0 +1,79 @@
+# Scan test example
+- take an arbitrary mem-file, e.g. readgpioid
+- cp tb_rv64i_instr99scantest.sv tb_rv64i.sv
+- run simulation
+
+# Run simulations
+# ... remove old runs
+rm -rf build
+# generate source directory and build directory
+cmake -S . -B build
+cmake -B build -DSIMULATOR=xsim
+cmake -B build -DSIMULATOR=verilator
+cmake -S . -B build -DSIMULATOR=verilator -DWAVES=ON
+# executes a single simulation (For waveform generation, un-comment the line
+#   in the SIM section of CMakeLists.txt. Do not forget to comment
+#   it after the single-run.)
+cmake -B build -DWAVES=ON
+cmake -B build -DWAVES=ON -DSIMULATOR=verilator
+cmake --build build --target sim_readgpioid
+cmake --build build --target sim_instr06addi
+# executes all simulations as regression
+cmake --build build --target regression
+# executes all simulations as regression and collects the errors
+cmake --build build --target collect_errors
+
+Sequences:
+==========
+- Single Vivado simulation with wave
+------------------------------------
+rm -rf build
+cmake -S . -B build -DSIMULATOR=xsim -DWAVES=ON
+cmake --build build --target sim_instr06addi
+cmake --build build --target sim_instr99loadimem
+
+- Single Verilator simulation with wave
+---------------------------------------------
+rm -rf build
+cmake -S . -B build -DSIMULATOR=verilator -DWAVES=ON
+cmake --build build --target sim_instr06addi
+
+- Regression Vivado simulation without wave
+------------------------------------
+rm -rf build
+cmake -S . -B build -DSIMULATOR=xsim
+cmake --build build --target collect_errors
+
+- Regression Verilator simulation without wave
+---------------------------------------------
+rm -rf build
+cmake -S . -B build -DSIMULATOR=verilator
+cmake --build build --target collect_errors
+
+
+
+2Do:
+- In the design phase of QSPI, many registers where added - check the memory map and the decoder.
+- Add QSPI to the design.
+- Try an XIP-simulation.
+- Adapt the CGU to the real needs (QSPI-XIP <-> core speed)
+  * Define a target clock speed of the external oscillator.
+  * Get the speed of a typical NOR-flash.
+- Test suite: Verilator, cocotb, riscv-tests (https://github.com/riscv-software-src/riscv-tests), riscv-arch-test (https://github.com/riscv-non-isa/riscv-arch-test)
+
+cocotb-chain:
+============================
+- Directory structure:
+project/
+├── rtl (src)/
+│   ├── as_top_mem.sv
+│   └── ...
+├── sim/
+│   ├── Makefile
+│   ├── test_cpu.py
+│   └── waves/
+├── tests (rv64Sim)/
+│   ├── add.mem
+│   ├── branch.mem
+│   └── ...
+

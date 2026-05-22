@@ -1,0 +1,259 @@
+\section{QSPI Peripheral}
+
+\subsection{Overview}
+
+The QSPI peripheral provides a flexible SPI/QSPI master interface with support for:
+\begin{itemize}
+  \item Single, Dual and Quad SPI modes
+  \item Command, Address, Dummy and Data phases
+  \item Execute-In-Place (XIP) mode
+  \item Configurable clock generation
+  \item Interrupt-driven operation
+  \item FIFO-based transmit and receive buffering
+\end{itemize}
+
+The design is split into:
+\begin{itemize}
+  \item QSPI Kernel (protocol engine, FSM, shifters)
+  \item FIFO buffers (TX/RX)
+  \item Register interface (Wishbone via BPI)
+\end{itemize}
+
+\subsection{Architecture}
+
+The peripheral consists of three major blocks:
+
+\begin{enumerate}
+  \item \textbf{Register Interface (Top Level)}
+  \item \textbf{QSPI Kernel}
+  \item \textbf{FIFO Subsystem}
+\end{enumerate}
+
+The kernel is controlled via memory-mapped registers and interacts with the FIFOs for data transfer.
+
+\subsection{Register Model}
+
+All registers are 64-bit wide.
+
+\begin{itemize}
+  \item CTRL: control bits (start, flush, mode configuration)
+  \item CMD: command opcode (8-bit)
+  \item ADDR: address (32-bit used)
+  \item LEN: transfer length in bytes
+  \item DUMMY: dummy cycles
+  \item CLKDIV: clock divider
+  \item TIMEOUT: timeout counter
+  \item STATUS: runtime status flags
+  \item FIFOSTAT: FIFO levels and flags
+  \item XIPMODE: XIP mode bits
+  \item Interrupt registers: ISR, RIS, IMSC, MIS, ICR
+\end{itemize}
+
+\subsection{Finite State Machine (FSM)}
+
+\subsubsection{States}
+
+\begin{itemize}
+  \item IDLE
+  \item CMD
+  \item ADDR
+  \item DUM
+  \item DAT
+  \item DONE
+\end{itemize}
+
+\subsubsection{State Transitions}
+
+\begin{itemize}
+  \item IDLE → CMD (normal start)
+  \item IDLE → ADDR (XIP active)
+  \item CMD → ADDR
+  \item ADDR → DUM or DAT
+  \item DUM → DAT
+  \item DAT → DONE
+  \item DONE → IDLE
+\end{itemize}
+
+\subsubsection{Important Behavior}
+
+\begin{itemize}
+  \item CMD phase is always Single-SPI
+  \item XIP mode skips CMD phase
+  \item DONE is a \textbf{single-cycle pulse}
+  \item DAT termination depends on TX/RX mode and bit counter
+\end{itemize}
+
+\subsection{Clock Generation}
+
+The SPI clock is generated as:
+
+\[
+f_{SCK} = \frac{f_{clk}}{2 \cdot (CLKDIV + 1)}
+\]
+
+Drive/sample signals occur \textbf{one system clock before} the actual SCK edge:
+\begin{itemize}
+  \item Drive: before falling edge (Mode 0)
+  \item Sample: before rising edge
+\end{itemize}
+
+\subsection{Data Path}
+
+\subsubsection{Bus Width Selection}
+
+The number of bits per SCK cycle:
+\begin{itemize}
+  \item 1-bit (single)
+  \item 2-bit (dual)
+  \item 4-bit (quad)
+\end{itemize}
+
+\subsubsection{Shift Registers}
+
+\paragraph{TX}
+\begin{itemize}
+  \item Loaded before DAT phase
+  \item Shifted MSB-first
+  \item Shift width depends on bus mode
+\end{itemize}
+
+\paragraph{RX}
+\begin{itemize}
+  \item Sampled on SCK sample events
+  \item Shifted into register
+\end{itemize}
+
+\subsubsection{Critical Timing Fix (RX Path)}
+
+Due to non-blocking assignment timing:
+\begin{itemize}
+  \item RX data is captured one cycle after kernel write signal
+  \item A two-stage pipeline ensures correct data transfer to FIFO
+\end{itemize}
+
+\subsection{FIFO Subsystem}
+
+\subsubsection{Structure}
+
+\begin{itemize}
+  \item Synchronous single-clock FIFO
+  \item Depth: parameterizable (default 16)
+  \item Width: 64-bit
+  \item Implemented using registers (not SRAM)
+\end{itemize}
+
+Internal elements:
+\begin{itemize}
+  \item Write pointer
+  \item Read pointer
+  \item Fill counter
+  \item Memory array
+\end{itemize}
+
+\subsubsection{Function}
+
+\paragraph{Write Operation}
+\begin{itemize}
+  \item Allowed if FIFO not full
+  \item Also allowed when simultaneous read occurs
+\end{itemize}
+
+\paragraph{Read Operation}
+\begin{itemize}
+  \item Allowed if FIFO not empty
+  \item Also allowed when simultaneous write occurs
+\end{itemize}
+
+\paragraph{Simultaneous Read/Write}
+\begin{itemize}
+  \item No change in fill level
+  \item Both pointers advance
+\end{itemize}
+
+\paragraph{Fill Level Tracking}
+\begin{itemize}
+  \item Counter tracks entries (0..DEPTH)
+  \item Used for interrupt generation
+\end{itemize}
+
+\paragraph{Status Signals}
+\begin{itemize}
+  \item full / empty
+  \item half full / half empty
+  \item almost full / almost empty
+\end{itemize}
+
+\paragraph{Read Latency}
+\begin{itemize}
+  \item Output is combinational from memory
+  \item Effective latency: 1 cycle (due to pointer update)
+\end{itemize}
+
+\paragraph{Flush}
+\begin{itemize}
+  \item Synchronous reset of pointers and counter
+\end{itemize}
+
+\subsection{Interrupt System}
+
+\subsubsection{Sources}
+
+\begin{itemize}
+  \item DONE
+  \item RX HALF
+  \item TX HALF
+  \item ERROR
+  \item TIMEOUT
+\end{itemize}
+
+\subsubsection{RIS Register}
+
+\begin{itemize}
+  \item Latching behavior
+  \item Set by:
+    \begin{itemize}
+      \item hardware events (edge detection)
+      \item software (ISR write)
+    \end{itemize}
+  \item Cleared by:
+    \begin{itemize}
+      \item ICR write
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Important Property}
+
+Interrupts are generated on \textbf{edges}, not levels.
+
+\subsection{XIP Mode}
+
+\begin{itemize}
+  \item Activated after DONE when enabled
+  \item Skips CMD phase
+  \item Mode bits are driven during first dummy cycle
+\end{itemize}
+
+\subsection{Error Handling}
+
+Errors occur when:
+\begin{itemize}
+  \item TX underflow
+  \item RX overflow
+\end{itemize}
+
+\subsection{Timeout}
+
+\begin{itemize}
+  \item Counter decrements during active transfer
+  \item Timeout flag set when reaching zero
+\end{itemize}
+
+\subsection{Status Signals}
+
+\begin{itemize}
+  \item busy
+  \item done (pulse)
+  \item error
+  \item timeout
+  \item xip\_active
+\end{itemize}

@@ -1,0 +1,19 @@
+Instruction memory implementation depends on the chip variant:
+
+\begin{itemize}
+  \item \textbf{Variant~A (No-Cache):}
+    A 32\,kB on-chip SRAM (\texttt{asIMem}) holds 8\,192 RISC-V 32-bit
+    instructions.
+    It is loaded via the JTAG TAP before execution and is read-only
+    during CPU operation.
+    The CPU accesses it through a legacy flat bus interface
+    (\texttt{iBusAddr\_o}, \texttt{iBusDataRd\_i}).
+
+  \item \textbf{Variant~B (Cache):}
+    There is no on-chip instruction memory.
+    Instructions reside on off-chip NOR Flash and are fetched into the
+    4\,kB I-Cache on demand.
+    Cache misses are served by a 4-beat AXI4 INCR burst through the Memory
+    Arbiter and QSPI controller.
+    The CPU instruction fetch interface is \texttt{as\_icache\_if}.
+\end{itemize}

@@ -1,0 +1,26 @@
+Data memory implementation depends on the chip variant:
+
+\begin{itemize}
+  \item \textbf{Variant~A (No-Cache):}
+    An 8\,kB on-chip SRAM (\texttt{asDMemTop}) serves as the data memory.
+    It is connected to the CPU via a Wishbone B3 slave interface and
+    supports byte, halfword, word, and doubleword accesses.
+    Address range: \texttt{0x0000\_0000}--\texttt{0x0000\_1FFF}.
+
+  \item \textbf{Variant~B (Cache):}
+    There is no traditional on-chip data memory.
+    The data address space is split into two regions:
+    \begin{itemize}
+      \item \textbf{Flash region} (addresses below the Scratchpad base):
+        read-only data cached in the 4\,kB D-Cache.
+        Only load misses trigger cache-line fills from NOR Flash.
+        Store operations to this region are not permitted and generate a
+        bus error (\texttt{dc\_err\_o}).
+      \item \textbf{Scratchpad region}
+        (\texttt{SP\_BASE}~=~\texttt{0x0000\_0000},
+        size~=~8\,kB by default):
+        an on-chip SRAM accessed directly with byte granularity,
+        bypassing the D-Cache.
+        This region holds \texttt{.data}, \texttt{.bss}, heap, and stack.
+    \end{itemize}
+\end{itemize}
