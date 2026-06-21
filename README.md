@@ -310,27 +310,6 @@ PASSED: 8 / 8    FAILED: 0 / 8
 ALL TESTS PASSED - PIPELINE WORKING CORRECTLY
 ```
 
----
-
-## Synthesis Results (Zybo Z7-10)
-
-**Full system (including IPs):**
-
-| Resource | Used | Available | Utilization |
-|----------|------|-----------|-------------|
-| Slice LUTs | 4050 | 17600 | 23% |
-| Slice Registers | 3526 | 35200 | 10% |
-| Block RAM Tiles | 10 | 60 | 17% |
-| Bonded IOB | 16 | 100 | 16% |
-
-**Pipeline CPU core (`as_cpux`) only:**
-
-| Resource | Count |
-|----------|-------|
-| Slice LUTs | 3725 |
-| Slice Registers | 2894 |
-| F7 Muxes | 516 |
-| F8 Muxes | 256 |
 
 ---
 
